@@ -1,6 +1,6 @@
 # tg2max
 
-Отдельный сервис для переноса постов из Telegram-канала в Max (VK), без зависимости от `MiniFarm`.
+Отдельный сервис для переноса постов из Telegram-канала в Max через Bot API (`platform-api.max.ru`), без зависимости от `MiniFarm`.
 
 ## Что делает
 
@@ -23,6 +23,10 @@
 - `npm run crosspost:max -- @channel`
 - `npm run crosspost:max:dry -- @channel`
 - `npm run crosspost:max:publish -- @channel`
+
+Опционально можно явно задать чат назначения:
+
+- `npm run crosspost:max -- @channel --max-chat-id -123456789`
 
 ## Безопасность для MiniFarm
 

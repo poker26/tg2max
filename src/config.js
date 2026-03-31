@@ -23,16 +23,15 @@ export const config = {
     serviceKey: required("SUPABASE_SERVICE_KEY"),
   },
   minio: {
-    endpoint: required("MINIO_ENDPOINT"),
-    accessKey: required("MINIO_ACCESS_KEY"),
-    secretKey: required("MINIO_SECRET_KEY"),
+    endpoint: optional("MINIO_ENDPOINT"),
+    accessKey: optional("MINIO_ACCESS_KEY"),
+    secretKey: optional("MINIO_SECRET_KEY"),
     bucketMedia: optional("MINIO_BUCKET_MEDIA", "tg2max-media"),
   },
   max: {
-    accessToken: required("MAX_ACCESS_TOKEN"),
-    groupId: required("MAX_GROUP_ID"),
-    apiVersion: optional("MAX_API_VERSION", "5.199"),
-    apiBaseUrl: optional("MAX_API_BASE_URL", "https://api.vk.com/method"),
+    botToken: optional("MAX_BOT_TOKEN"),
+    targetChatId: optional("MAX_TARGET_CHAT_ID"),
+    apiBaseUrl: optional("MAX_API_BASE_URL", "https://platform-api.max.ru"),
     postDelayMs: parseInt(optional("MAX_POST_DELAY_MS", "5000"), 10),
   },
 };

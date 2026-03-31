@@ -17,6 +17,10 @@ if (!sourceChannel) {
   console.error("Source channel is required. Pass @channel or set TELEGRAM_SOURCE_CHANNEL.");
   process.exit(1);
 }
+if (!config.minio.endpoint) {
+  console.error("MINIO_ENDPOINT is required for media import.");
+  process.exit(1);
+}
 
 function buildTelegramMediaIdentifier(channelLabel, messageId) {
   const safeChannel = String(channelLabel).replace(/^@/, "");

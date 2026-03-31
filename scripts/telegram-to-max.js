@@ -3,8 +3,7 @@ import "dotenv/config";
 import { execFileSync } from "child_process";
 import { config } from "../src/config.js";
 import { supabase } from "../src/db/supabase.js";
-import { publishToMax, uploadWallPhoto } from "../src/max/api.js";
-import { downloadBufferFromMinio } from "../src/minio-client.js";
+import { getMaxBotMe, publishToMaxChat } from "../src/max/api.js";
 
 const cliArgs = process.argv.slice(2);
 const skipImport = cliArgs.includes("--skip-import");
@@ -15,9 +14,16 @@ const limitFlagIndex = cliArgs.indexOf("--limit");
 const publishLimit = limitFlagIndex >= 0 ? parseInt(cliArgs[limitFlagIndex + 1] || "50", 10) : 50;
 const channelArg = cliArgs.find((arg) => arg.startsWith("@"));
 const sourceChannel = channelArg || config.telegram.sourceChannel;
+const maxChatIdFlagIndex = cliArgs.indexOf("--max-chat-id");
+const maxChatIdFromCli = maxChatIdFlagIndex >= 0 ? cliArgs[maxChatIdFlagIndex + 1] : "";
+const targetMaxChatId = maxChatIdFromCli || config.max.targetChatId;
 
 if (!sourceChannel) {
   console.error("Source channel is required. Pass @channel or set TELEGRAM_SOURCE_CHANNEL.");
+  process.exit(1);
+}
+if (!targetMaxChatId || !/^-?\d+$/.test(String(targetMaxChatId).trim())) {
+  console.error("MAX target chat id is required. Set MAX_TARGET_CHAT_ID or pass --max-chat-id <id>.");
   process.exit(1);
 }
 
@@ -92,27 +98,27 @@ async function crosspostOne(post) {
   }
 
   try {
-    const attachments = [];
     const media = await findMediaForPost(post);
+    const textWithMediaNotice =
+      media && media.url
+        ? `${post.text}\n\n(Медиа в архиве: ${media.url})`
+        : post.text;
 
-    if (media?.bucket_name && media?.object_key) {
-      const photoBuffer = await downloadBufferFromMinio(media.bucket_name, media.object_key);
-      const attachment = await uploadWallPhoto(photoBuffer, `${post.external_id}.jpg`);
-      attachments.push(attachment);
-    }
-
-    const { postId } = await publishToMax({ message: post.text, attachments });
+    const result = await publishToMaxChat({
+      chatId: String(targetMaxChatId).trim(),
+      message: textWithMediaNotice,
+    });
 
     await supabase
       .from("crosspost_log")
       .update({
         status: "published",
-        target_post_id: String(postId),
+        target_post_id: result.messageId != null ? String(result.messageId) : null,
         published_at: new Date().toISOString(),
       })
       .eq("id", logEntry.id);
 
-    return { status: "published", postId };
+    return { status: "published", result };
   } catch (error) {
     await supabase
       .from("crosspost_log")
@@ -128,6 +134,11 @@ async function crosspostOne(post) {
 
 async function main() {
   console.log("Telegram -> Max crosspost pipeline\n");
+  const me = await getMaxBotMe();
+  console.log(
+    `MAX bot connected: user_id=${me?.user_id ?? me?.id ?? "?"}, username=${me?.username ?? "(none)"}`
+  );
+  console.log(`Target MAX chat: ${targetMaxChatId}\n`);
 
   if (!skipImport) {
     runImportStep();
@@ -165,7 +176,11 @@ async function main() {
 
     const result = await crosspostOne(post);
     if (result.status === "published") {
-      console.log(`  [ok] Max post #${result.postId}`);
+      console.log(
+        `  [ok] Delivered to MAX chat (endpoint: ${result.result.endpoint}, message_id: ${
+          result.result.messageId ?? "n/a"
+        })`
+      );
       publishedCount++;
     } else if (result.status === "error") {
       console.error(`  [error] ${result.error}`);

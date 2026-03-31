@@ -1,23 +1,34 @@
 import * as Minio from "minio";
 import { config } from "./config.js";
 
-const endpointUrl = new URL(config.minio.endpoint);
-const customPort = endpointUrl.port ? parseInt(endpointUrl.port, 10) : undefined;
+function createMinioClient() {
+  if (!config.minio.endpoint) {
+    return null;
+  }
 
-const clientOptions = {
-  endPoint: endpointUrl.hostname,
-  useSSL: endpointUrl.protocol === "https:",
-  accessKey: config.minio.accessKey,
-  secretKey: config.minio.secretKey,
-};
+  const endpointUrl = new URL(config.minio.endpoint);
+  const customPort = endpointUrl.port ? parseInt(endpointUrl.port, 10) : undefined;
 
-if (customPort !== undefined) {
-  clientOptions.port = customPort;
+  const clientOptions = {
+    endPoint: endpointUrl.hostname,
+    useSSL: endpointUrl.protocol === "https:",
+    accessKey: config.minio.accessKey,
+    secretKey: config.minio.secretKey,
+  };
+
+  if (customPort !== undefined) {
+    clientOptions.port = customPort;
+  }
+
+  return new Minio.Client(clientOptions);
 }
 
-export const minioClient = new Minio.Client(clientOptions);
+export const minioClient = createMinioClient();
 
 export async function uploadBufferToMinio(buffer, objectKey, contentType = "image/jpeg") {
+  if (!minioClient) {
+    throw new Error("MinIO is not configured (MINIO_ENDPOINT is empty)");
+  }
   await minioClient.putObject(
     config.minio.bucketMedia,
     objectKey,
@@ -29,6 +40,9 @@ export async function uploadBufferToMinio(buffer, objectKey, contentType = "imag
 }
 
 export async function downloadBufferFromMinio(bucketName, objectKey) {
+  if (!minioClient) {
+    throw new Error("MinIO is not configured (MINIO_ENDPOINT is empty)");
+  }
   const stream = await minioClient.getObject(bucketName, objectKey);
   return streamToBuffer(stream);
 }
