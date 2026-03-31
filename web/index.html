@@ -191,7 +191,9 @@ ID публичного канала Telegram виден в описании к�
 
     function validateInputs() {
       const telegramChannel = normalizeTelegramChannel(telegramChannelInput.value);
-      const maxChatId = (maxChatIdInput.value || "").trim();
+      const maxChatIdRaw = (maxChatIdInput.value || "").trim();
+      const maxChatIdFromUrl = maxChatIdRaw.match(/web\.max\.ru\/(-?\d+)/i)?.[1] || "";
+      const maxChatId = maxChatIdFromUrl || maxChatIdRaw;
 
       if (!telegramChannel) {
         appendLog("[UI] Укажите Telegram channel.\n");
