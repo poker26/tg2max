@@ -31,6 +31,21 @@
 Важно: канал Telegram берётся только из CLI-аргумента (`@channel`) или из поля web-формы. Из `.env` канал не читается.
 Web-режим запускает полный пайплайн (импорт + публикация), а не `--skip-import`.
 
+## PM2 (постоянный web-процесс)
+
+Добавлен файл `ecosystem.config.cjs` для запуска web UI как постоянного сервиса.
+
+На сервере:
+
+- `pm2 start ecosystem.config.cjs`
+- `pm2 save`
+- `pm2 startup`
+
+Проверка:
+
+- `pm2 status`
+- `pm2 logs tg2max-web --lines 100`
+
 Опционально можно явно задать чат назначения:
 
 - `npm run crosspost:max -- @channel --max-chat-id -123456789`
