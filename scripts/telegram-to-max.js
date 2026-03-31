@@ -91,6 +91,35 @@ async function loadPendingPosts() {
     return [];
   }
 
+  const { data: mediaRowsForAlbumDetection, error: mediaRowsError } = await runWithRetry(
+    "load media rows for album child detection",
+    async () =>
+      await supabase
+        .from("media_uploads")
+        .select("original_filename, source_post_external_id")
+        .eq("source", "telegram_channel")
+        .eq("source_channel_id", sourceChannel)
+        .not("source_post_external_id", "is", null)
+        .limit(10000)
+  );
+
+  if (mediaRowsError) {
+    throw new Error(`Failed to load media rows for album detection: ${mediaRowsError.message}`);
+  }
+
+  const albumChildExternalIds = new Set();
+  for (const mediaRow of mediaRowsForAlbumDetection ?? []) {
+    const originalFilename = String(mediaRow.original_filename ?? "");
+    const parsedChildExternalId = originalFilename.match(/_(\d+)$/)?.[1] ?? null;
+    const anchorExternalId = String(mediaRow.source_post_external_id ?? "").trim();
+    if (!parsedChildExternalId || !anchorExternalId) {
+      continue;
+    }
+    if (parsedChildExternalId !== anchorExternalId) {
+      albumChildExternalIds.add(parsedChildExternalId);
+    }
+  }
+
   const { data: existingCrossposts, error: crosspostError } = await runWithRetry(
     "load crosspost_log",
     async () =>
@@ -106,7 +135,21 @@ async function loadPendingPosts() {
   }
 
   const alreadyCrosspostedIds = new Set((existingCrossposts ?? []).map((row) => row.channel_post_id));
-  return allPosts.filter((post) => !alreadyCrosspostedIds.has(post.id));
+  const filteredPosts = allPosts.filter((post) => {
+    if (alreadyCrosspostedIds.has(post.id)) {
+      return false;
+    }
+    if (albumChildExternalIds.has(String(post.external_id))) {
+      return false;
+    }
+    return true;
+  });
+
+  if (albumChildExternalIds.size > 0) {
+    console.log(`[info] Skipping ${albumChildExternalIds.size} album-child posts to avoid duplicate single-media publishes.`);
+  }
+
+  return filteredPosts;
 }
 
 async function findMediaForPost(post) {
