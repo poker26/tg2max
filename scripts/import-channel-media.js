@@ -27,6 +27,77 @@ function buildTelegramMediaIdentifier(channelLabel, messageId) {
   return `tg_${safeChannel}_${messageId}`;
 }
 
+function normalizeGroupedId(message) {
+  const groupedId = message?.groupedId ?? message?.grouped_id ?? null;
+  if (groupedId == null) return null;
+  return String(groupedId).trim();
+}
+
+function buildGroupAnchorMap(messages) {
+  const map = new Map();
+  for (const message of messages) {
+    const groupedId = normalizeGroupedId(message);
+    if (!groupedId) continue;
+    const messageId = Number(message.id);
+    const existing = map.get(groupedId);
+    if (!existing || messageId < existing.numericMessageId) {
+      map.set(groupedId, {
+        numericMessageId: messageId,
+        anchorExternalId: String(message.id),
+      });
+    }
+  }
+  return map;
+}
+
+function extensionFromMimeType(mimeType, fallback = "bin") {
+  const normalized = String(mimeType ?? "").toLowerCase();
+  if (normalized.includes("jpeg")) return "jpg";
+  if (normalized.includes("jpg")) return "jpg";
+  if (normalized.includes("png")) return "png";
+  if (normalized.includes("gif")) return "gif";
+  if (normalized.includes("webp")) return "webp";
+  if (normalized.includes("mp4")) return "mp4";
+  if (normalized.includes("quicktime")) return "mov";
+  if (normalized.includes("webm")) return "webm";
+  if (normalized.includes("mkv")) return "mkv";
+  return fallback;
+}
+
+function classifyMediaMessage(message) {
+  const mediaClassName = message?.media?.className ?? "";
+  if (mediaClassName === "MessageMediaPhoto") {
+    return {
+      isSupported: true,
+      mediaKind: "image",
+      mimeType: "image/jpeg",
+      extension: "jpg",
+    };
+  }
+
+  if (mediaClassName === "MessageMediaDocument") {
+    const mimeType = String(message?.media?.document?.mimeType ?? "").toLowerCase();
+    if (mimeType.startsWith("video/")) {
+      return {
+        isSupported: true,
+        mediaKind: "video",
+        mimeType,
+        extension: extensionFromMimeType(mimeType, "mp4"),
+      };
+    }
+    if (mimeType.startsWith("image/")) {
+      return {
+        isSupported: true,
+        mediaKind: "image",
+        mimeType,
+        extension: extensionFromMimeType(mimeType, "jpg"),
+      };
+    }
+  }
+
+  return { isSupported: false };
+}
+
 async function loadAlreadyImportedIdentifiers() {
   const { data, error } = await supabase
     .from("media_uploads")
@@ -42,27 +113,48 @@ async function loadAlreadyImportedIdentifiers() {
   return new Set((data ?? []).map((row) => row.original_filename));
 }
 
-async function importPhotoMessage(client, message, channelLabel, existingIdentifiers) {
+async function importMediaMessage(
+  client,
+  message,
+  channelLabel,
+  existingIdentifiers,
+  groupAnchorMap
+) {
+  const mediaInfo = classifyMediaMessage(message);
+  if (!mediaInfo.isSupported) {
+    return "skipped";
+  }
+
   const mediaIdentifier = buildTelegramMediaIdentifier(channelLabel, message.id);
   if (existingIdentifiers.has(mediaIdentifier)) {
     return "skipped";
   }
 
-  const photoBuffer = await client.downloadMedia(message, {});
-  if (!photoBuffer || photoBuffer.length === 0) {
+  const mediaBuffer = await client.downloadMedia(message, {});
+  if (!mediaBuffer || mediaBuffer.length === 0) {
     return "skipped";
   }
 
-  const objectKey = `telegram/${randomUUID()}.jpg`;
-  await uploadBufferToMinio(Buffer.from(photoBuffer), objectKey, "image/jpeg");
+  const objectKey = `telegram/${randomUUID()}.${mediaInfo.extension}`;
+  await uploadBufferToMinio(Buffer.from(mediaBuffer), objectKey, mediaInfo.mimeType);
 
   const publishedAt = message.date ? new Date(message.date * 1000).toISOString() : null;
+  const groupedId = normalizeGroupedId(message);
+  const groupedAnchor = groupedId ? groupAnchorMap.get(groupedId) : null;
+  const sourcePostExternalId = groupedAnchor?.anchorExternalId ?? String(message.id);
+
   const mediaRecord = {
     kind: "user",
     bucket_name: config.minio.bucketMedia,
     object_key: objectKey,
     url: `${config.minio.endpoint}/${config.minio.bucketMedia}/${objectKey}`,
     source: "telegram_channel",
+    source_channel_id: channelLabel,
+    source_post_external_id: sourcePostExternalId,
+    source_grouped_id: groupedId,
+    media_kind: mediaInfo.mediaKind,
+    mime_type: mediaInfo.mimeType,
+    file_size_bytes: Number(mediaBuffer.length),
     original_filename: mediaIdentifier,
     created_at: publishedAt,
   };
@@ -88,16 +180,30 @@ async function main() {
   await client.connect();
 
   const messages = await client.getMessages(sourceChannel, { limit: limitValue });
-  const photoMessages = messages.filter((message) => message.media?.className === "MessageMediaPhoto");
-  console.log(`Found ${photoMessages.length} photo messages (out of ${messages.length}).`);
+  const mediaMessages = messages.filter((message) => classifyMediaMessage(message).isSupported);
+  const videoCount = mediaMessages.filter(
+    (message) => classifyMediaMessage(message).mediaKind === "video"
+  ).length;
+  const imageCount = mediaMessages.length - videoCount;
+  const groupAnchorMap = buildGroupAnchorMap(messages);
+
+  console.log(
+    `Found ${mediaMessages.length} supported media (images: ${imageCount}, videos: ${videoCount}) out of ${messages.length} messages.`
+  );
 
   const existingIdentifiers = await loadAlreadyImportedIdentifiers();
   let importedCount = 0;
   let skippedCount = 0;
   let errorCount = 0;
 
-  for (const message of photoMessages) {
-    const result = await importPhotoMessage(client, message, sourceChannel, existingIdentifiers);
+  for (const message of mediaMessages) {
+    const result = await importMediaMessage(
+      client,
+      message,
+      sourceChannel,
+      existingIdentifiers,
+      groupAnchorMap
+    );
     if (result === "imported") importedCount++;
     if (result === "skipped") skippedCount++;
     if (result === "error") errorCount++;

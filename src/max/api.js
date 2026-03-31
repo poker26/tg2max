@@ -41,9 +41,9 @@ async function requestMaxApi(method, path, { queryParams = null, jsonBody = null
 
   if (!response.ok) {
     const errorDetails =
-      payload && typeof payload === "object" && "message" in payload
-        ? payload.message
-        : responseText;
+      typeof payload === "string"
+        ? payload
+        : JSON.stringify(payload ?? { message: responseText });
     throw new Error(`MAX API ${method} ${path} failed (${response.status}): ${errorDetails}`);
   }
 
@@ -118,9 +118,22 @@ async function sendMessageViaChatEndpoint(chatId, messageBody) {
   });
 }
 
-export async function uploadImageToMax(photoBuffer, filename = "photo.jpg") {
+function mapMediaKindToUploadType(mediaKind) {
+  if (mediaKind === "video") return "video";
+  if (mediaKind === "file") return "file";
+  return "image";
+}
+
+function mapMediaKindToAttachmentType(mediaKind) {
+  if (mediaKind === "video") return "video";
+  if (mediaKind === "file") return "file";
+  return "image";
+}
+
+export async function uploadMediaToMax({ mediaBuffer, filename, mimeType, mediaKind = "image" }) {
+  const uploadType = mapMediaKindToUploadType(mediaKind);
   const uploadMeta = await requestMaxApi("POST", "/uploads", {
-    queryParams: { type: "image" },
+    queryParams: { type: uploadType },
   });
 
   const uploadUrl = uploadMeta?.url;
@@ -129,8 +142,10 @@ export async function uploadImageToMax(photoBuffer, filename = "photo.jpg") {
   }
 
   const formData = new FormData();
-  const blob = new Blob([photoBuffer], { type: "image/jpeg" });
-  formData.append("data", blob, filename);
+  const blob = new Blob([mediaBuffer], {
+    type: mimeType || (mediaKind === "video" ? "video/mp4" : "image/jpeg"),
+  });
+  formData.append("data", blob, filename || "media.bin");
 
   const uploadResponse = await fetch(uploadUrl, {
     method: "POST",
@@ -155,6 +170,7 @@ export async function uploadImageToMax(photoBuffer, filename = "photo.jpg") {
   }
 
   const uploadToken =
+    uploadMeta?.token ??
     findTokenRecursively(uploadPayload) ??
     findTokenRecursively(uploadMeta);
 
@@ -181,22 +197,20 @@ async function sendMessageWithFallback(chatId, messageBody) {
   }
 }
 
-export async function publishToMaxChat({ chatId, message, imageToken = null }) {
+export async function publishToMaxChat({ chatId, message, attachments = [] }) {
   const normalizedMessage = String(message ?? "").trim();
-  if (!normalizedMessage && !imageToken) {
+  if (!normalizedMessage && attachments.length === 0) {
     throw new Error("Cannot publish an empty message to Max");
   }
 
   const messageBody = {
     text: normalizedMessage || undefined,
   };
-  if (imageToken) {
-    messageBody.attachments = [
-      {
-        type: "image",
-        payload: { token: imageToken },
-      },
-    ];
+  if (attachments.length > 0) {
+    messageBody.attachments = attachments.map((attachment) => ({
+      type: mapMediaKindToAttachmentType(attachment.mediaKind),
+      payload: { token: attachment.token },
+    }));
   }
 
   const retryDelaysMs = [1200, 2500, 5000];

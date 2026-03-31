@@ -3,7 +3,7 @@ import "dotenv/config";
 import { execFileSync } from "child_process";
 import { config } from "../src/config.js";
 import { supabase } from "../src/db/supabase.js";
-import { getMaxBotMe, publishToMaxChat, uploadImageToMax } from "../src/max/api.js";
+import { getMaxBotMe, publishToMaxChat, uploadMediaToMax } from "../src/max/api.js";
 import { downloadBufferFromMinio } from "../src/minio-client.js";
 
 const cliArgs = process.argv.slice(2);
@@ -72,16 +72,58 @@ async function loadPendingPosts() {
 }
 
 async function findMediaForPost(post) {
+  const { data: linkedRows, error: linkedError } = await supabase
+    .from("media_uploads")
+    .select("id, bucket_name, object_key, url, media_kind, mime_type, created_at")
+    .eq("source", "telegram_channel")
+    .eq("source_channel_id", post.channel_id)
+    .eq("source_post_external_id", post.external_id)
+    .order("created_at", { ascending: true })
+    .limit(12);
+
+  if (!linkedError && linkedRows?.length) {
+    return linkedRows;
+  }
+
   const channelLabel = post.channel_id.replace(/^@/, "");
   const mediaIdentifier = `tg_${channelLabel}_${post.external_id}`;
-
-  const { data: mediaRows } = await supabase
+  const { data: fallbackRows } = await supabase
     .from("media_uploads")
-    .select("id, bucket_name, object_key, url")
+    .select("id, bucket_name, object_key, url, created_at")
     .eq("original_filename", mediaIdentifier)
     .limit(1);
 
-  return mediaRows?.[0] || null;
+  return (fallbackRows ?? []).map((row) => ({
+    ...row,
+    media_kind: "image",
+    mime_type: "image/jpeg",
+  }));
+}
+
+function mediaKindToUploadKind(mediaRow) {
+  if (mediaRow.media_kind === "video") {
+    return "video";
+  }
+  return "image";
+}
+
+function fileExtensionFromMediaRow(mediaRow, fallback = "bin") {
+  const mimeType = String(mediaRow?.mime_type ?? "").toLowerCase();
+  if (mimeType.includes("jpeg") || mimeType.includes("jpg")) return "jpg";
+  if (mimeType.includes("png")) return "png";
+  if (mimeType.includes("gif")) return "gif";
+  if (mimeType.includes("webp")) return "webp";
+  if (mimeType.includes("mp4")) return "mp4";
+  if (mimeType.includes("quicktime")) return "mov";
+  if (mimeType.includes("webm")) return "webm";
+  if (mimeType.includes("mkv")) return "mkv";
+
+  const objectKey = String(mediaRow?.object_key ?? "");
+  const dotIndex = objectKey.lastIndexOf(".");
+  if (dotIndex > -1 && dotIndex < objectKey.length - 1) {
+    return objectKey.slice(dotIndex + 1);
+  }
+  return fallback;
 }
 
 async function crosspostOne(post) {
@@ -99,17 +141,30 @@ async function crosspostOne(post) {
   }
 
   try {
-    const media = await findMediaForPost(post);
-    let imageToken = null;
-    if (media?.bucket_name && media?.object_key) {
-      const photoBuffer = await downloadBufferFromMinio(media.bucket_name, media.object_key);
-      imageToken = await uploadImageToMax(photoBuffer, `${post.external_id}.jpg`);
+    const mediaRows = await findMediaForPost(post);
+    const attachments = [];
+    for (let mediaIndex = 0; mediaIndex < mediaRows.length; mediaIndex++) {
+      const media = mediaRows[mediaIndex];
+      if (!media?.bucket_name || !media?.object_key) {
+        continue;
+      }
+
+      const mediaBuffer = await downloadBufferFromMinio(media.bucket_name, media.object_key);
+      const mediaKind = mediaKindToUploadKind(media);
+      const fileExtension = fileExtensionFromMediaRow(media, mediaKind === "video" ? "mp4" : "jpg");
+      const mediaToken = await uploadMediaToMax({
+        mediaBuffer,
+        filename: `${post.external_id}-${mediaIndex + 1}.${fileExtension}`,
+        mimeType: media.mime_type,
+        mediaKind,
+      });
+      attachments.push({ mediaKind, token: mediaToken });
     }
 
     const result = await publishToMaxChat({
       chatId: String(targetMaxChatId).trim(),
       message: post.text,
-      imageToken,
+      attachments,
     });
 
     await supabase
@@ -172,7 +227,11 @@ async function main() {
 
     if (dryRun) {
       const media = await findMediaForPost(post);
-      console.log(`  [dry-run] Would publish. Has photo: ${Boolean(media)}`);
+      const imageCount = media.filter((item) => item.media_kind !== "video").length;
+      const videoCount = media.filter((item) => item.media_kind === "video").length;
+      console.log(
+        `  [dry-run] Would publish. Media: total=${media.length}, images=${imageCount}, videos=${videoCount}`
+      );
       skippedCount++;
       continue;
     }
