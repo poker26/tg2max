@@ -11,6 +11,17 @@ const WEB_ROOT = join(__dirname, "..", "web");
 const DEFAULT_PORT = parseInt(process.env.TG2MAX_WEB_PORT || "3020", 10);
 
 let runningProcess = null;
+let runSequence = 0;
+let activeRun = null;
+
+function appendRunLog(text) {
+  if (!activeRun) return;
+  activeRun.output += text;
+  if (activeRun.output.length > 1_000_000) {
+    activeRun.output = activeRun.output.slice(-500_000);
+    activeRun.truncated = true;
+  }
+}
 
 function writeJson(response, statusCode, payload) {
   response.writeHead(statusCode, { "Content-Type": "application/json; charset=utf-8" });
@@ -54,26 +65,28 @@ function buildCrosspostArguments({ telegramChannel, maxChatId, mode }) {
   return argumentsList;
 }
 
-function streamCommandOutput(response, commandArguments) {
-  response.writeHead(200, {
-    "Content-Type": "text/plain; charset=utf-8",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
-  });
-
+function startBackgroundRun(commandArguments) {
   runningProcess = spawn("node", commandArguments, {
     cwd: join(__dirname, ".."),
     env: process.env,
     windowsHide: true,
   });
 
-  const startedAtIsoString = new Date().toISOString();
-  response.write(`[${startedAtIsoString}] Starting: node ${commandArguments.join(" ")}\n\n`);
+  runSequence += 1;
+  activeRun = {
+    id: runSequence,
+    mode: commandArguments.includes("--newest-first") ? "test" : "full",
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    exitCode: null,
+    output: "",
+    truncated: false,
+  };
+
+  appendRunLog(`[${activeRun.startedAt}] Starting: node ${commandArguments.join(" ")}\n\n`);
 
   const writeChunk = (chunk) => {
-    if (!response.writableEnded) {
-      response.write(chunk.toString("utf8"));
-    }
+    appendRunLog(chunk.toString("utf8"));
   };
 
   runningProcess.stdout.on("data", writeChunk);
@@ -81,28 +94,27 @@ function streamCommandOutput(response, commandArguments) {
 
   runningProcess.on("error", (error) => {
     writeChunk(`\n[ERROR] ${error.message}\n`);
-    if (!response.writableEnded) {
-      response.end();
+    if (activeRun) {
+      activeRun.finishedAt = new Date().toISOString();
+      activeRun.exitCode = -1;
     }
     runningProcess = null;
   });
 
   runningProcess.on("close", (code) => {
     writeChunk(`\n[DONE] Process exited with code ${code}\n`);
-    if (!response.writableEnded) {
-      response.end();
+    if (activeRun) {
+      activeRun.finishedAt = new Date().toISOString();
+      activeRun.exitCode = code;
     }
     runningProcess = null;
-  });
-
-  response.on("close", () => {
-    // Do not kill the running export when the HTTP connection closes.
-    // Reverse proxies or browser-side reconnects may close the stream early.
   });
 }
 
 const server = http.createServer(async (request, response) => {
-  if (request.method === "GET" && request.url === "/") {
+  const requestUrl = new URL(request.url, "http://localhost");
+
+  if (request.method === "GET" && requestUrl.pathname === "/") {
     try {
       const html = await readFile(join(WEB_ROOT, "index.html"), "utf8");
       response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -114,7 +126,7 @@ const server = http.createServer(async (request, response) => {
     }
   }
 
-  if (request.method === "POST" && request.url === "/api/run") {
+  if (request.method === "POST" && requestUrl.pathname === "/api/run") {
     if (runningProcess) {
       writeJson(response, 409, { error: "Another export is already running." });
       return;
@@ -143,12 +155,47 @@ const server = http.createServer(async (request, response) => {
     }
 
     const commandArguments = buildCrosspostArguments({ telegramChannel, maxChatId, mode });
-    streamCommandOutput(response, commandArguments);
+    startBackgroundRun(commandArguments);
+    writeJson(response, 200, {
+      ok: true,
+      runId: activeRun?.id ?? null,
+      startedAt: activeRun?.startedAt ?? null,
+    });
     return;
   }
 
-  if (request.method === "GET" && request.url === "/api/status") {
-    writeJson(response, 200, { running: Boolean(runningProcess) });
+  if (request.method === "GET" && requestUrl.pathname === "/api/status") {
+    writeJson(response, 200, {
+      running: Boolean(runningProcess),
+      runId: activeRun?.id ?? null,
+      startedAt: activeRun?.startedAt ?? null,
+      finishedAt: activeRun?.finishedAt ?? null,
+      exitCode: activeRun?.exitCode ?? null,
+      outputLength: activeRun?.output.length ?? 0,
+      truncated: Boolean(activeRun?.truncated),
+    });
+    return;
+  }
+
+  if (request.method === "GET" && requestUrl.pathname === "/api/logs") {
+    const requestedRunId = parseInt(requestUrl.searchParams.get("runId") || "", 10);
+    const offset = Math.max(0, parseInt(requestUrl.searchParams.get("offset") || "0", 10));
+    if (!activeRun || Number.isNaN(requestedRunId) || requestedRunId !== activeRun.id) {
+      writeJson(response, 404, { error: "Run not found." });
+      return;
+    }
+
+    const safeOffset = Math.min(offset, activeRun.output.length);
+    const chunk = activeRun.output.slice(safeOffset);
+    writeJson(response, 200, {
+      runId: activeRun.id,
+      running: Boolean(runningProcess),
+      finishedAt: activeRun.finishedAt,
+      exitCode: activeRun.exitCode,
+      truncated: activeRun.truncated,
+      chunk,
+      nextOffset: safeOffset + chunk.length,
+    });
     return;
   }
 

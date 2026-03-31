@@ -169,6 +169,7 @@ ID публичного канала Telegram виден в описании к�
     const runFullButton = document.getElementById("runFullButton");
     const clearLogsButton = document.getElementById("clearLogsButton");
     const logsBox = document.getElementById("logs");
+    let currentPollTimer = null;
 
     const storageKey = "tg2max-web-ui";
     const instructionKey = "tg2max-web-ui-instruction";
@@ -267,18 +268,62 @@ ID публичного канала Telegram виден в описании к�
           return;
         }
 
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder("utf-8");
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          appendLog(decoder.decode(value, { stream: true }));
+        const payload = await response.json();
+        const runId = payload.runId;
+        if (!runId) {
+          appendLog("[UI] Сервер не вернул runId.\n");
+          return;
         }
+
+        appendLog(`[UI] Run #${runId} запущен\n`);
+        await pollRunLogs(runId);
       } catch (error) {
         appendLog(`[UI] Сетевая ошибка: ${error.message}\n`);
       } finally {
         setButtonsEnabled(true);
       }
+    }
+
+    async function pollRunLogs(runId) {
+      let offset = 0;
+
+      if (currentPollTimer) {
+        clearTimeout(currentPollTimer);
+        currentPollTimer = null;
+      }
+
+      return new Promise((resolve) => {
+        const tick = async () => {
+          try {
+            const response = await fetch(`/api/logs?runId=${encodeURIComponent(runId)}&offset=${offset}`);
+            if (!response.ok) {
+              appendLog(`[UI] Ошибка чтения логов: HTTP ${response.status}\n`);
+              resolve();
+              return;
+            }
+
+            const payload = await response.json();
+            if (payload.chunk) {
+              appendLog(payload.chunk);
+            }
+            offset = payload.nextOffset ?? offset;
+
+            if (!payload.running) {
+              appendLog(`[UI] Run #${runId} завершён (code: ${payload.exitCode ?? "n/a"})\n`);
+              resolve();
+              return;
+            }
+          } catch (error) {
+            appendLog(`[UI] Ошибка опроса логов: ${error.message}\n`);
+            resolve();
+            return;
+          }
+
+          currentPollTimer = setTimeout(tick, 1000);
+        };
+
+        tick();
+      });
     }
 
     runTestButton.addEventListener("click", () => runExport("test"));
