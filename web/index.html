@@ -192,7 +192,10 @@ ID публичного канала Telegram виден в описании к�
     function validateInputs() {
       const telegramChannel = normalizeTelegramChannel(telegramChannelInput.value);
       const maxChatIdRaw = (maxChatIdInput.value || "").trim();
-      const maxChatIdFromUrl = maxChatIdRaw.match(/web\.max\.ru\/(-?\d+)/i)?.[1] || "";
+      const maxChatIdFromUrl =
+        maxChatIdRaw.match(/web\.max\.ru\/(?:[^/\s]*\/)?(-?\d+)/i)?.[1] ||
+        maxChatIdRaw.match(/(-?\d{5,})/)?.[1] ||
+        "";
       const maxChatId = maxChatIdFromUrl || maxChatIdRaw;
 
       if (!telegramChannel) {
@@ -200,8 +203,12 @@ ID публичного канала Telegram виден в описании к�
         return null;
       }
       if (!/^-?\\d+$/.test(maxChatId)) {
-        appendLog("[UI] MAX chat ID должен быть числом.\n");
+        appendLog(`[UI] MAX chat ID должен быть числом. Введено: "${maxChatIdRaw}"\n`);
         return null;
+      }
+
+      if (maxChatId !== maxChatIdRaw) {
+        appendLog(`[UI] MAX chat ID распознан как: ${maxChatId}\n`);
       }
       return { telegramChannel, maxChatId };
     }
