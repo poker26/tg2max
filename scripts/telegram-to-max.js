@@ -3,7 +3,8 @@ import "dotenv/config";
 import { execFileSync } from "child_process";
 import { config } from "../src/config.js";
 import { supabase } from "../src/db/supabase.js";
-import { getMaxBotMe, publishToMaxChat } from "../src/max/api.js";
+import { getMaxBotMe, publishToMaxChat, uploadImageToMax } from "../src/max/api.js";
+import { downloadBufferFromMinio } from "../src/minio-client.js";
 
 const cliArgs = process.argv.slice(2);
 const skipImport = cliArgs.includes("--skip-import");
@@ -99,14 +100,16 @@ async function crosspostOne(post) {
 
   try {
     const media = await findMediaForPost(post);
-    const textWithMediaNotice =
-      media && media.url
-        ? `${post.text}\n\n(Медиа в архиве: ${media.url})`
-        : post.text;
+    let imageToken = null;
+    if (media?.bucket_name && media?.object_key) {
+      const photoBuffer = await downloadBufferFromMinio(media.bucket_name, media.object_key);
+      imageToken = await uploadImageToMax(photoBuffer, `${post.external_id}.jpg`);
+    }
 
     const result = await publishToMaxChat({
       chatId: String(targetMaxChatId).trim(),
-      message: textWithMediaNotice,
+      message: post.text,
+      imageToken,
     });
 
     await supabase
