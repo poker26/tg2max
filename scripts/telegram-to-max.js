@@ -143,22 +143,34 @@ async function crosspostOne(post) {
   try {
     const mediaRows = await findMediaForPost(post);
     const attachments = [];
+    let skippedMediaCount = 0;
     for (let mediaIndex = 0; mediaIndex < mediaRows.length; mediaIndex++) {
       const media = mediaRows[mediaIndex];
       if (!media?.bucket_name || !media?.object_key) {
         continue;
       }
 
-      const mediaBuffer = await downloadBufferFromMinio(media.bucket_name, media.object_key);
-      const mediaKind = mediaKindToUploadKind(media);
-      const fileExtension = fileExtensionFromMediaRow(media, mediaKind === "video" ? "mp4" : "jpg");
-      const mediaToken = await uploadMediaToMax({
-        mediaBuffer,
-        filename: `${post.external_id}-${mediaIndex + 1}.${fileExtension}`,
-        mimeType: media.mime_type,
-        mediaKind,
-      });
-      attachments.push({ mediaKind, token: mediaToken });
+      try {
+        const mediaBuffer = await downloadBufferFromMinio(media.bucket_name, media.object_key);
+        const mediaKind = mediaKindToUploadKind(media);
+        const fileExtension = fileExtensionFromMediaRow(media, mediaKind === "video" ? "mp4" : "jpg");
+        const mediaToken = await uploadMediaToMax({
+          mediaBuffer,
+          filename: `${post.external_id}-${mediaIndex + 1}.${fileExtension}`,
+          mimeType: media.mime_type,
+          mediaKind,
+        });
+        attachments.push({ mediaKind, token: mediaToken });
+      } catch (mediaError) {
+        skippedMediaCount++;
+        console.warn(
+          `  [warn] Skip media ${mediaIndex + 1}/${mediaRows.length} for post #${post.external_id}: ${mediaError.message}`
+        );
+      }
+    }
+
+    if (skippedMediaCount > 0) {
+      console.log(`  [info] Post #${post.external_id}: uploaded ${attachments.length}, skipped ${skippedMediaCount}`);
     }
 
     const result = await publishToMaxChat({

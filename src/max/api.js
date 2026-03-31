@@ -111,13 +111,6 @@ async function sendMessageViaMessagesEndpoint(chatId, messageBody) {
   });
 }
 
-async function sendMessageViaChatEndpoint(chatId, messageBody) {
-  const normalizedChatId = encodeURIComponent(String(chatId).trim());
-  return requestMaxApi("POST", `/chats/${normalizedChatId}/messages`, {
-    jsonBody: messageBody,
-  });
-}
-
 function mapMediaKindToUploadType(mediaKind) {
   if (mediaKind === "video") return "video";
   if (mediaKind === "file") return "file";
@@ -147,26 +140,41 @@ export async function uploadMediaToMax({ mediaBuffer, filename, mimeType, mediaK
   });
   formData.append("data", blob, filename || "media.bin");
 
-  const uploadResponse = await fetch(uploadUrl, {
-    method: "POST",
-    headers: { Authorization: getMaxBotToken() },
-    body: formData,
-  });
+  let uploadPayload = null;
+  let uploadFailedError = null;
+  const uploadRetryDelaysMs = [0, 1500, 4000];
+  for (let uploadAttempt = 0; uploadAttempt < uploadRetryDelaysMs.length; uploadAttempt++) {
+    if (uploadAttempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, uploadRetryDelaysMs[uploadAttempt]));
+    }
 
-  const uploadResponseText = await uploadResponse.text();
-  let uploadPayload;
-  try {
-    uploadPayload = uploadResponseText ? JSON.parse(uploadResponseText) : null;
-  } catch {
-    uploadPayload = uploadResponseText;
-  }
+    const uploadResponse = await fetch(uploadUrl, {
+      method: "POST",
+      headers: { Authorization: getMaxBotToken() },
+      body: formData,
+    });
 
-  if (!uploadResponse.ok) {
-    throw new Error(
+    const uploadResponseText = await uploadResponse.text();
+    try {
+      uploadPayload = uploadResponseText ? JSON.parse(uploadResponseText) : null;
+    } catch {
+      uploadPayload = uploadResponseText;
+    }
+
+    if (uploadResponse.ok) {
+      uploadFailedError = null;
+      break;
+    }
+
+    uploadFailedError = new Error(
       `MAX upload failed (${uploadResponse.status}): ${
         typeof uploadPayload === "string" ? uploadPayload : JSON.stringify(uploadPayload)
       }`
     );
+  }
+
+  if (uploadFailedError) {
+    throw uploadFailedError;
   }
 
   const uploadToken =
@@ -185,16 +193,6 @@ export async function uploadMediaToMax({ mediaBuffer, filename, mimeType, mediaK
   }
 
   return uploadToken;
-}
-
-async function sendMessageWithFallback(chatId, messageBody) {
-  try {
-    const response = await sendMessageViaMessagesEndpoint(chatId, messageBody);
-    return { response, endpoint: "/messages?chat_id" };
-  } catch (firstError) {
-    const response = await sendMessageViaChatEndpoint(chatId, messageBody);
-    return { response, endpoint: `/chats/${chatId}/messages`, fallbackFrom: firstError.message };
-  }
 }
 
 export async function publishToMaxChat({ chatId, message, attachments = [] }) {
@@ -217,12 +215,10 @@ export async function publishToMaxChat({ chatId, message, attachments = [] }) {
   let lastError = null;
   for (let attemptIndex = 0; attemptIndex < retryDelaysMs.length + 1; attemptIndex++) {
     try {
-      const transportResult = await sendMessageWithFallback(chatId, messageBody);
-      const response = transportResult.response;
+      const response = await sendMessageViaMessagesEndpoint(chatId, messageBody);
       return {
         messageId: response?.message_id ?? response?.id ?? response?.message?.message_id ?? null,
-        endpoint: transportResult.endpoint,
-        fallbackFrom: transportResult.fallbackFrom,
+        endpoint: "/messages?chat_id",
       };
     } catch (error) {
       lastError = error;
