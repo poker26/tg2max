@@ -1,0 +1,25 @@
+{
+  "name": "tg2max",
+  "version": "0.1.0",
+  "description": "Telegram to Max crosspost service",
+  "type": "module",
+  "main": "scripts/telegram-to-max.js",
+  "scripts": {
+    "migrate": "node scripts/run-migrations.js",
+    "tg:import:posts": "node scripts/import-channel-posts.js",
+    "tg:import:media": "node scripts/import-channel-media.js",
+    "crosspost:max": "node scripts/telegram-to-max.js",
+    "crosspost:max:dry": "node scripts/telegram-to-max.js --dry-run",
+    "crosspost:max:publish": "node scripts/telegram-to-max.js --skip-import"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.50.0",
+    "dotenv": "^16.4.5",
+    "minio": "^8.0.1",
+    "pg": "^8.13.0",
+    "telegram": "^2.26.22"
+  }
+}

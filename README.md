@@ -1,0 +1,34 @@
+# tg2max
+
+Отдельный сервис для переноса постов из Telegram-канала в Max (VK), без зависимости от `MiniFarm`.
+
+## Что делает
+
+- импортирует тексты постов из Telegram в таблицу `channel_posts`
+- импортирует фото в MinIO и сохраняет ссылки в `media_uploads`
+- публикует неперенесенные посты в Max и ведет лог в `crosspost_log`
+
+## Быстрый старт
+
+1. Скопировать `.env.example` в `.env` и заполнить переменные.
+2. Установить зависимости:
+   - `npm install`
+3. Прогнать миграции:
+   - `npm run migrate`
+
+## Команды
+
+- `npm run tg:import:posts -- @channel`
+- `npm run tg:import:media -- @channel`
+- `npm run crosspost:max -- @channel`
+- `npm run crosspost:max:dry -- @channel`
+- `npm run crosspost:max:publish -- @channel`
+
+## Безопасность для MiniFarm
+
+Этот репозиторий полностью автономный:
+
+- отдельный `.env`
+- отдельные скрипты
+- отдельные миграции
+- не требует изменений в `MiniFarm`
