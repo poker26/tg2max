@@ -32,6 +32,38 @@ function sleep(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+function shouldRetrySupabaseError(error) {
+  const errorText = String(error?.message || "").toLowerCase();
+  return (
+    errorText.includes("502") ||
+    errorText.includes("bad gateway") ||
+    errorText.includes("timed out") ||
+    errorText.includes("timeout") ||
+    errorText.includes("econnreset") ||
+    errorText.includes("service unavailable")
+  );
+}
+
+async function runWithRetry(operationName, operationFn, { attempts = 4, baseDelayMs = 1500 } = {}) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await operationFn();
+    } catch (error) {
+      lastError = error;
+      if (!shouldRetrySupabaseError(error) || attempt === attempts) {
+        break;
+      }
+      const delayMs = baseDelayMs * attempt;
+      console.warn(`[retry] ${operationName} failed (${error.message}). Retry in ${delayMs}ms...`);
+      await sleep(delayMs);
+    }
+  }
+
+  throw lastError;
+}
+
 function runImportStep() {
   console.log("=== Step 1: Importing posts from Telegram ===");
   execFileSync("node", ["scripts/import-channel-posts.js", sourceChannel], { stdio: "inherit" });
@@ -41,11 +73,15 @@ function runImportStep() {
 }
 
 async function loadPendingPosts() {
-  const { data: allPosts, error: postsError } = await supabase
-    .from("channel_posts")
-    .select("id, external_id, channel_id, text, published_at, media_refs")
-    .eq("channel_id", sourceChannel)
-    .order("published_at", { ascending: !newestFirst });
+  const { data: allPosts, error: postsError } = await runWithRetry(
+    "load channel_posts",
+    async () =>
+      await supabase
+        .from("channel_posts")
+        .select("id, external_id, channel_id, text, published_at, media_refs")
+        .eq("channel_id", sourceChannel)
+        .order("published_at", { ascending: !newestFirst })
+  );
 
   if (postsError) {
     throw new Error(`Failed to load channel posts: ${postsError.message}`);
@@ -55,13 +91,15 @@ async function loadPendingPosts() {
     return [];
   }
 
-  const postIds = allPosts.map((post) => post.id);
-  const { data: existingCrossposts, error: crosspostError } = await supabase
-    .from("crosspost_log")
-    .select("channel_post_id")
-    .eq("target", "max")
-    .in("status", ["published", "pending"])
-    .in("channel_post_id", postIds);
+  const { data: existingCrossposts, error: crosspostError } = await runWithRetry(
+    "load crosspost_log",
+    async () =>
+      await supabase
+        .from("crosspost_log")
+        .select("channel_post_id")
+        .eq("target", "max")
+        .in("status", ["published", "pending"])
+  );
 
   if (crosspostError) {
     throw new Error(`Failed to load crosspost log: ${crosspostError.message}`);
