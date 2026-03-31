@@ -165,17 +165,48 @@ function fileExtensionFromMediaRow(mediaRow, fallback = "bin") {
 }
 
 async function crosspostOne(post) {
-  const { data: logEntry, error: insertLogError } = await supabase
+  const { data: insertedLogEntry, error: insertLogError } = await supabase
     .from("crosspost_log")
     .insert({ channel_post_id: post.id, target: "max", status: "pending" })
     .select("id")
     .single();
 
+  let logEntry = insertedLogEntry;
   if (insertLogError) {
-    if (insertLogError.code === "23505") {
+    if (insertLogError.code !== "23505") {
+      throw insertLogError;
+    }
+
+    const { data: existingLogEntry, error: existingLogError } = await supabase
+      .from("crosspost_log")
+      .select("id, status")
+      .eq("channel_post_id", post.id)
+      .eq("target", "max")
+      .maybeSingle();
+
+    if (existingLogError || !existingLogEntry) {
+      throw existingLogError || new Error("crosspost_log unique conflict but row not found");
+    }
+
+    if (existingLogEntry.status === "published" || existingLogEntry.status === "pending") {
       return { status: "skipped" };
     }
-    throw insertLogError;
+
+    const { error: resetLogError } = await supabase
+      .from("crosspost_log")
+      .update({
+        status: "pending",
+        error_message: null,
+        target_post_id: null,
+        published_at: null,
+      })
+      .eq("id", existingLogEntry.id);
+
+    if (resetLogError) {
+      throw resetLogError;
+    }
+
+    logEntry = { id: existingLogEntry.id };
   }
 
   try {
