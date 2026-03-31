@@ -10,7 +10,8 @@
     "tg:import:media": "node scripts/import-channel-media.js",
     "crosspost:max": "node scripts/telegram-to-max.js",
     "crosspost:max:dry": "node scripts/telegram-to-max.js --dry-run",
-    "crosspost:max:publish": "node scripts/telegram-to-max.js --skip-import"
+    "crosspost:max:publish": "node scripts/telegram-to-max.js --skip-import",
+    "web": "node scripts/web-ui.js"
   },
   "engines": {
     "node": ">=18"

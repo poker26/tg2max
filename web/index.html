@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>tg2max Export UI</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: #f6f8fb;
+      color: #1b2330;
+    }
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      display: grid;
+      gap: 16px;
+    }
+    .card {
+      background: #fff;
+      border: 1px solid #d7deea;
+      border-radius: 10px;
+      padding: 16px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    }
+    h1 {
+      margin: 0 0 8px 0;
+      font-size: 22px;
+    }
+    h2 {
+      margin: 0 0 10px 0;
+      font-size: 18px;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 6px;
+      color: #41506a;
+    }
+    input, textarea, button {
+      font: inherit;
+    }
+    input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 10px 12px;
+      border: 1px solid #bfcbe0;
+      border-radius: 8px;
+      background: #fff;
+    }
+    textarea {
+      width: 100%;
+      box-sizing: border-box;
+      min-height: 140px;
+      padding: 10px 12px;
+      border: 1px solid #bfcbe0;
+      border-radius: 8px;
+      resize: vertical;
+      line-height: 1.45;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 10px 14px;
+      cursor: pointer;
+      color: #fff;
+      background: #2f6fec;
+    }
+    button.secondary {
+      background: #405b82;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    #logs {
+      min-height: 320px;
+      background: #0e1726;
+      color: #d8e3ff;
+      border-radius: 8px;
+      padding: 12px;
+      white-space: pre-wrap;
+      overflow: auto;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .hint {
+      font-size: 12px;
+      color: #5a6f91;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <h1>tg2max: экспорт Telegram -> MAX</h1>
+      <div class="hint">Канал Telegram берётся только из поля ввода. Значения из `.env` для канала игнорируются.</div>
+    </div>
+
+    <div class="card">
+      <h2>1) Инструкция</h2>
+      <textarea id="instruction">
+Вставьте сюда ваш текст инструкции.
+Это поле можно редактировать локально под вашу команду.
+      </textarea>
+    </div>
+
+    <div class="card">
+      <h2>2) Параметры</h2>
+      <div class="grid">
+        <div>
+          <label for="telegramChannel">Telegram channel ID / username</label>
+          <input id="telegramChannel" placeholder="@alpacaPro" />
+        </div>
+        <div>
+          <label for="maxChatId">MAX chat ID</label>
+          <input id="maxChatId" placeholder="-72781323264178" />
+        </div>
+      </div>
+      <div class="hint">
+        Тестовый режим: первые 5 сообщений от самых свежих.<br />
+        Полный режим: всегда старые сообщения сначала.
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>3) Запуск</h2>
+      <div class="actions">
+        <button id="runTestButton">Тестовый экспорт (5, newest first)</button>
+        <button id="runFullButton" class="secondary">Полный экспорт (oldest first)</button>
+        <button id="clearLogsButton" class="secondary">Очистить логи</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>4) Логи</h2>
+      <div id="logs"></div>
+    </div>
+  </div>
+
+  <script>
+    const telegramChannelInput = document.getElementById("telegramChannel");
+    const maxChatIdInput = document.getElementById("maxChatId");
+    const instructionTextarea = document.getElementById("instruction");
+    const runTestButton = document.getElementById("runTestButton");
+    const runFullButton = document.getElementById("runFullButton");
+    const clearLogsButton = document.getElementById("clearLogsButton");
+    const logsBox = document.getElementById("logs");
+
+    const storageKey = "tg2max-web-ui";
+    const instructionKey = "tg2max-web-ui-instruction";
+
+    function appendLog(text) {
+      logsBox.textContent += text;
+      logsBox.scrollTop = logsBox.scrollHeight;
+    }
+
+    function setButtonsEnabled(enabled) {
+      runTestButton.disabled = !enabled;
+      runFullButton.disabled = !enabled;
+    }
+
+    function normalizeTelegramChannel(value) {
+      const trimmed = (value || "").trim();
+      if (!trimmed) return "";
+      return trimmed.startsWith("@") ? trimmed : `@${trimmed}`;
+    }
+
+    function validateInputs() {
+      const telegramChannel = normalizeTelegramChannel(telegramChannelInput.value);
+      const maxChatId = (maxChatIdInput.value || "").trim();
+
+      if (!telegramChannel) {
+        appendLog("[UI] Укажите Telegram channel.\n");
+        return null;
+      }
+      if (!/^-?\\d+$/.test(maxChatId)) {
+        appendLog("[UI] MAX chat ID должен быть числом.\n");
+        return null;
+      }
+      return { telegramChannel, maxChatId };
+    }
+
+    function saveInputsToStorage() {
+      localStorage.setItem(storageKey, JSON.stringify({
+        telegramChannel: telegramChannelInput.value,
+        maxChatId: maxChatIdInput.value,
+      }));
+    }
+
+    function loadInputsFromStorage() {
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return;
+      try {
+        const payload = JSON.parse(raw);
+        if (payload.telegramChannel) telegramChannelInput.value = payload.telegramChannel;
+        if (payload.maxChatId) maxChatIdInput.value = payload.maxChatId;
+      } catch {}
+    }
+
+    function saveInstruction() {
+      localStorage.setItem(instructionKey, instructionTextarea.value);
+    }
+
+    function loadInstruction() {
+      const storedInstruction = localStorage.getItem(instructionKey);
+      if (storedInstruction) {
+        instructionTextarea.value = storedInstruction;
+      }
+    }
+
+    async function runExport(mode) {
+      const validatedInputs = validateInputs();
+      if (!validatedInputs) return;
+
+      saveInputsToStorage();
+      setButtonsEnabled(false);
+      appendLog(`\n[UI] Запуск режима: ${mode}\n`);
+
+      try {
+        const response = await fetch("/api/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mode,
+            telegramChannel: validatedInputs.telegramChannel,
+            maxChatId: validatedInputs.maxChatId,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorPayload = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+          appendLog(`[UI] Ошибка запуска: ${errorPayload.error || "unknown"}\n`);
+          setButtonsEnabled(true);
+          return;
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          appendLog(decoder.decode(value, { stream: true }));
+        }
+      } catch (error) {
+        appendLog(`[UI] Сетевая ошибка: ${error.message}\n`);
+      } finally {
+        setButtonsEnabled(true);
+      }
+    }
+
+    runTestButton.addEventListener("click", () => runExport("test"));
+    runFullButton.addEventListener("click", () => runExport("full"));
+    clearLogsButton.addEventListener("click", () => {
+      logsBox.textContent = "";
+    });
+
+    telegramChannelInput.addEventListener("change", saveInputsToStorage);
+    maxChatIdInput.addEventListener("change", saveInputsToStorage);
+    instructionTextarea.addEventListener("input", saveInstruction);
+
+    loadInputsFromStorage();
+    loadInstruction();
+    appendLog("[UI] Готово к запуску.\n");
+  </script>
+</body>
+</html>

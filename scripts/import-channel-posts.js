@@ -7,10 +7,10 @@ import { supabase } from "../src/db/supabase.js";
 
 const cliArgs = process.argv.slice(2);
 const channelArg = cliArgs.find((arg) => arg.startsWith("@"));
-const sourceChannel = channelArg || config.telegram.sourceChannel;
+const sourceChannel = channelArg;
 
 if (!sourceChannel) {
-  console.error("Source channel is required. Pass @channel or set TELEGRAM_SOURCE_CHANNEL.");
+  console.error("Source channel is required. Pass @channel.");
   process.exit(1);
 }
 
@@ -18,10 +18,11 @@ async function savePostsToSupabase(messages, channelUsername) {
   let savedCount = 0;
 
   for (const message of messages) {
+    const normalizedText = String(message.text ?? "").trim();
     const postRecord = {
       external_id: String(message.id),
       channel_id: channelUsername,
-      text: message.text,
+      text: normalizedText,
       published_at: new Date(message.date * 1000).toISOString(),
       media_refs: [],
     };
@@ -53,15 +54,17 @@ async function main() {
   await client.connect();
 
   const allMessages = await client.getMessages(sourceChannel, { limit: config.telegram.importLimit });
-  const textMessages = allMessages.filter(
-    (message) => message.text && message.text.trim().length > 10
-  );
+  const importableMessages = allMessages.filter((message) => {
+    const hasText = String(message.text ?? "").trim().length > 0;
+    const hasMedia = Boolean(message.media);
+    return hasText || hasMedia;
+  });
 
   console.log(
-    `Found ${textMessages.length} text posts (out of ${allMessages.length} messages).`
+    `Found ${importableMessages.length} posts (text and/or media) out of ${allMessages.length} messages.`
   );
 
-  const savedCount = await savePostsToSupabase(textMessages, sourceChannel);
+  const savedCount = await savePostsToSupabase(importableMessages, sourceChannel);
   console.log(`Saved ${savedCount} posts to Supabase.`);
 
   await client.disconnect();

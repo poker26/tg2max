@@ -16,7 +16,6 @@ export const config = {
     apiHash: required("TG_API_HASH"),
     session: required("TG_SESSION"),
     importLimit: parseInt(optional("TG_IMPORT_LIMIT", "200"), 10),
-    sourceChannel: optional("TELEGRAM_SOURCE_CHANNEL"),
   },
   supabase: {
     url: required("SUPABASE_URL"),

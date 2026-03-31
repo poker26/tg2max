@@ -11,10 +11,10 @@ const cliArgs = process.argv.slice(2);
 const limitFlagIndex = cliArgs.indexOf("--limit");
 const limitValue = limitFlagIndex >= 0 ? parseInt(cliArgs[limitFlagIndex + 1] || "200", 10) : config.telegram.importLimit;
 const channelArg = cliArgs.find((arg) => arg.startsWith("@"));
-const sourceChannel = channelArg || config.telegram.sourceChannel;
+const sourceChannel = channelArg;
 
 if (!sourceChannel) {
-  console.error("Source channel is required. Pass @channel or set TELEGRAM_SOURCE_CHANNEL.");
+  console.error("Source channel is required. Pass @channel.");
   process.exit(1);
 }
 if (!config.minio.endpoint) {
