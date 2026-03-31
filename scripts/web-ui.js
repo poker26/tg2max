@@ -96,10 +96,8 @@ function streamCommandOutput(response, commandArguments) {
   });
 
   response.on("close", () => {
-    if (runningProcess) {
-      runningProcess.kill("SIGTERM");
-      runningProcess = null;
-    }
+    // Do not kill the running export when the HTTP connection closes.
+    // Reverse proxies or browser-side reconnects may close the stream early.
   });
 }
 
