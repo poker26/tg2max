@@ -63,6 +63,47 @@ function extractMaxApiErrorCode(error) {
   return "";
 }
 
+function findTokenRecursively(payload, depth = 0) {
+  if (payload == null || depth > 8) {
+    return null;
+  }
+
+  if (typeof payload === "string") {
+    const trimmedValue = payload.trim();
+    if (trimmedValue.length > 12 && !trimmedValue.startsWith("{") && !trimmedValue.startsWith("[")) {
+      return trimmedValue;
+    }
+    return null;
+  }
+
+  if (typeof payload !== "object") {
+    return null;
+  }
+
+  if ("token" in payload && typeof payload.token === "string" && payload.token.trim() !== "") {
+    return payload.token.trim();
+  }
+
+  for (const value of Object.values(payload)) {
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        const nestedToken = findTokenRecursively(entry, depth + 1);
+        if (nestedToken) {
+          return nestedToken;
+        }
+      }
+      continue;
+    }
+
+    const nestedToken = findTokenRecursively(value, depth + 1);
+    if (nestedToken) {
+      return nestedToken;
+    }
+  }
+
+  return null;
+}
+
 async function sendMessageViaMessagesEndpoint(chatId, messageBody) {
   return requestMaxApi("POST", "/messages", {
     queryParams: { chat_id: chatId },
@@ -113,9 +154,18 @@ export async function uploadImageToMax(photoBuffer, filename = "photo.jpg") {
     );
   }
 
-  const uploadToken = uploadPayload?.token ?? uploadMeta?.token;
+  const uploadToken =
+    findTokenRecursively(uploadPayload) ??
+    findTokenRecursively(uploadMeta);
+
   if (!uploadToken) {
-    throw new Error("MAX image upload did not return token");
+    const compactMeta =
+      typeof uploadMeta === "string" ? uploadMeta : JSON.stringify(uploadMeta)?.slice(0, 500);
+    const compactUpload =
+      typeof uploadPayload === "string" ? uploadPayload : JSON.stringify(uploadPayload)?.slice(0, 500);
+    throw new Error(
+      `MAX image upload did not return token. uploadMeta=${compactMeta}; uploadResponse=${compactUpload}`
+    );
   }
 
   return uploadToken;
