@@ -101,7 +101,9 @@ function classifyMediaMessage(message) {
 async function loadAlreadyImportedIdentifiers() {
   const { data, error } = await supabase
     .from("media_uploads")
-    .select("original_filename")
+    .select(
+      "id, original_filename, source_channel_id, source_post_external_id, source_grouped_id, media_kind, mime_type"
+    )
     .eq("source", "telegram_channel")
     .not("original_filename", "is", null);
 
@@ -110,7 +112,12 @@ async function loadAlreadyImportedIdentifiers() {
     return new Set();
   }
 
-  return new Set((data ?? []).map((row) => row.original_filename));
+  const map = new Map();
+  for (const row of data ?? []) {
+    if (!row.original_filename) continue;
+    map.set(row.original_filename, row);
+  }
+  return map;
 }
 
 async function importMediaMessage(
@@ -126,8 +133,45 @@ async function importMediaMessage(
   }
 
   const mediaIdentifier = buildTelegramMediaIdentifier(channelLabel, message.id);
-  if (existingIdentifiers.has(mediaIdentifier)) {
-    return "skipped";
+  const groupedId = normalizeGroupedId(message);
+  const groupedAnchor = groupedId ? groupAnchorMap.get(groupedId) : null;
+  const sourcePostExternalId = groupedAnchor?.anchorExternalId ?? String(message.id);
+  const existingRow = existingIdentifiers.get(mediaIdentifier);
+  const publishedAt = message.date ? new Date(message.date * 1000).toISOString() : null;
+
+  if (existingRow) {
+    const metadataPatch = {};
+    if (existingRow.source_channel_id !== channelLabel) {
+      metadataPatch.source_channel_id = channelLabel;
+    }
+    if (existingRow.source_post_external_id !== sourcePostExternalId) {
+      metadataPatch.source_post_external_id = sourcePostExternalId;
+    }
+    if ((existingRow.source_grouped_id ?? null) !== groupedId) {
+      metadataPatch.source_grouped_id = groupedId;
+    }
+    if ((existingRow.media_kind ?? "image") !== mediaInfo.mediaKind) {
+      metadataPatch.media_kind = mediaInfo.mediaKind;
+    }
+    if ((existingRow.mime_type ?? "").toLowerCase() !== mediaInfo.mimeType.toLowerCase()) {
+      metadataPatch.mime_type = mediaInfo.mimeType;
+    }
+
+    if (Object.keys(metadataPatch).length === 0) {
+      return "skipped";
+    }
+
+    const { error: updateError } = await supabase
+      .from("media_uploads")
+      .update(metadataPatch)
+      .eq("id", existingRow.id);
+
+    if (updateError) {
+      console.error(`  [error] Update media #${message.id}: ${updateError.message}`);
+      return "error";
+    }
+
+    return "updated";
   }
 
   const mediaBuffer = await client.downloadMedia(message, {});
@@ -137,11 +181,6 @@ async function importMediaMessage(
 
   const objectKey = `telegram/${randomUUID()}.${mediaInfo.extension}`;
   await uploadBufferToMinio(Buffer.from(mediaBuffer), objectKey, mediaInfo.mimeType);
-
-  const publishedAt = message.date ? new Date(message.date * 1000).toISOString() : null;
-  const groupedId = normalizeGroupedId(message);
-  const groupedAnchor = groupedId ? groupAnchorMap.get(groupedId) : null;
-  const sourcePostExternalId = groupedAnchor?.anchorExternalId ?? String(message.id);
 
   const mediaRecord = {
     kind: "user",
@@ -193,6 +232,7 @@ async function main() {
 
   const existingIdentifiers = await loadAlreadyImportedIdentifiers();
   let importedCount = 0;
+  let updatedCount = 0;
   let skippedCount = 0;
   let errorCount = 0;
 
@@ -205,12 +245,14 @@ async function main() {
       groupAnchorMap
     );
     if (result === "imported") importedCount++;
+    if (result === "updated") updatedCount++;
     if (result === "skipped") skippedCount++;
     if (result === "error") errorCount++;
   }
 
   console.log("Done.");
   console.log(`  Imported: ${importedCount}`);
+  console.log(`  Updated:  ${updatedCount}`);
   console.log(`  Skipped:  ${skippedCount}`);
   console.log(`  Errors:   ${errorCount}`);
 
