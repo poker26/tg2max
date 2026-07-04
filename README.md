@@ -8,6 +8,7 @@
 - импортирует фото и видео из Telegram (включая альбомы) в MinIO и связывает их с исходным постом в `media_uploads`
 - публикует неперенесенные посты в Max и ведет лог в `crosspost_log`
 - для постов с фото загружает изображение в MAX через `POST /uploads?type=image` и отправляет вложением
+- поддерживает непрерывную синхронизацию `TG master -> MAX mirror` через `sync-worker` (create/update/delete)
 
 ## Быстрый старт
 
@@ -26,6 +27,7 @@
 - `npm run crosspost:max -- @channel`
 - `npm run crosspost:max:dry -- @channel`
 - `npm run crosspost:max:publish -- @channel`
+- `npm run sync:worker` — постоянный polling-воркер для near-realtime синхронизации
 - `npm run web` — простая web-страница для запуска тестового/полного экспорта и просмотра логов
 
 Важно: канал Telegram берётся только из CLI-аргумента (`@channel`) или из поля web-формы. Из `.env` канал не читается.
@@ -49,6 +51,33 @@ Web-режим запускает полный пайплайн (импорт + 
 Опционально можно явно задать чат назначения:
 
 - `npm run crosspost:max -- @channel --max-chat-id -123456789`
+
+## Continuous sync (TG master -> MAX mirror)
+
+Для режима постоянной синхронизации используйте переменные:
+
+- `SYNC_SOURCE_CHANNEL=@yourchannel`
+- `MAX_TARGET_CHAT_ID=-123456789`
+- `SYNC_POLL_INTERVAL_MS=30000`
+- `SYNC_POLL_LIMIT=200`
+
+Порядок запуска:
+
+1. `npm run migrate`
+2. `npm run sync:worker`
+
+Воркер делает:
+
+- `Collector`: читает свежие сообщения из Telegram, обновляет `channel_posts`/`media_uploads`, ставит события в `sync_events`
+- `Dispatcher`: применяет события в Max, ведет `message_map`
+- `Reconcile`: через `stale processing` в `sync_events` подбирает зависшие задачи на повтор
+
+Новые таблицы:
+
+- `sync_cursor`
+- `message_map`
+- `sync_events`
+- `sync_locks`
 
 ## Безопасность для MiniFarm
 

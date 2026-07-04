@@ -11,6 +11,8 @@
     "crosspost:max": "node scripts/telegram-to-max.js",
     "crosspost:max:dry": "node scripts/telegram-to-max.js --dry-run",
     "crosspost:max:publish": "node scripts/telegram-to-max.js --skip-import",
+    "sync:worker": "node scripts/sync-worker.js",
+    "sync:seed": "node scripts/seed-message-map.js",
     "web": "node scripts/web-ui.js"
   },
   "engines": {

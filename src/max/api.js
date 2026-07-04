@@ -50,6 +50,42 @@ async function requestMaxApi(method, path, { queryParams = null, jsonBody = null
   return payload;
 }
 
+function isRetryableMaxRequestError(error) {
+  const errorText = String(error?.message ?? "").toLowerCase();
+  return (
+    errorText.includes("(429)") ||
+    errorText.includes("(500)") ||
+    errorText.includes("(502)") ||
+    errorText.includes("(503)") ||
+    errorText.includes("(504)") ||
+    errorText.includes("timeout") ||
+    errorText.includes("econnreset")
+  );
+}
+
+async function requestMaxApiWithRetry(
+  method,
+  path,
+  { queryParams = null, jsonBody = null } = {},
+  { maxAttempts = 4, baseDelayMs = 1200 } = {}
+) {
+  let lastError = null;
+  for (let attemptIndex = 0; attemptIndex < maxAttempts; attemptIndex++) {
+    try {
+      return await requestMaxApi(method, path, { queryParams, jsonBody });
+    } catch (error) {
+      lastError = error;
+      const hasMoreAttempts = attemptIndex < maxAttempts - 1;
+      if (!hasMoreAttempts || !isRetryableMaxRequestError(error)) {
+        break;
+      }
+      const backoffMs = baseDelayMs * (attemptIndex + 1);
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    }
+  }
+  throw lastError;
+}
+
 export async function getMaxBotMe() {
   return requestMaxApi("GET", "/me");
 }
@@ -233,4 +269,34 @@ export async function publishToMaxChat({ chatId, message, attachments = [] }) {
   }
 
   throw lastError;
+}
+
+export async function editMessageInMaxChat({ chatId, messageId, message }) {
+  const text = String(message ?? "").trim();
+  if (!text) {
+    throw new Error("Cannot edit Max message with empty text");
+  }
+
+  const editPayload = await requestMaxApiWithRetry(
+    "PATCH",
+    `/messages/${encodeURIComponent(String(messageId))}`,
+    {
+      queryParams: { chat_id: chatId },
+      jsonBody: { text },
+    }
+  );
+
+  return {
+    messageId:
+      editPayload?.message_id ??
+      editPayload?.id ??
+      editPayload?.message?.message_id ??
+      String(messageId),
+  };
+}
+
+export async function deleteMessageInMaxChat({ chatId, messageId }) {
+  await requestMaxApiWithRetry("DELETE", `/messages/${encodeURIComponent(String(messageId))}`, {
+    queryParams: { chat_id: chatId },
+  });
 }

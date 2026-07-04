@@ -33,6 +33,18 @@ export const config = {
     apiBaseUrl: optional("MAX_API_BASE_URL", "https://platform-api.max.ru"),
     postDelayMs: parseInt(optional("MAX_POST_DELAY_MS", "5000"), 10),
   },
+  sync: {
+    sourceChannel: optional("SYNC_SOURCE_CHANNEL"),
+    pollIntervalMs: parseInt(optional("SYNC_POLL_INTERVAL_MS", "30000"), 10),
+    pollLimit: parseInt(optional("SYNC_POLL_LIMIT", "200"), 10),
+    eventBatchSize: parseInt(optional("SYNC_EVENT_BATCH_SIZE", "50"), 10),
+    lockTtlMs: parseInt(optional("SYNC_LOCK_TTL_MS", "120000"), 10),
+    lockName: optional("SYNC_LOCK_NAME", "tg_master_to_max_worker"),
+    staleProcessingMs: parseInt(optional("SYNC_STALE_PROCESSING_MS", "600000"), 10),
+    maxAttempts: parseInt(optional("SYNC_MAX_ATTEMPTS", "8"), 10),
+    retryBaseDelayMs: parseInt(optional("SYNC_RETRY_BASE_DELAY_MS", "2000"), 10),
+    deleteFallbackMode: optional("SYNC_DELETE_FALLBACK_MODE", "tombstone"),
+  },
 };
 
 export default config;

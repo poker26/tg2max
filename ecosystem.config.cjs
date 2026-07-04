@@ -14,5 +14,18 @@ module.exports = {
         TG2MAX_WEB_PORT: "3020",
       },
     },
+    {
+      name: "tg2max-sync",
+      cwd: "/root/tg2max",
+      script: "npm",
+      args: "run sync:worker",
+      interpreter: "none",
+      autorestart: true,
+      watch: false,
+      max_memory_restart: "400M",
+      env: {
+        NODE_ENV: "production",
+      },
+    },
   ],
 };
